@@ -13,7 +13,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with aiohttp.ClientSession() as session:
-        async with session.get("http://localhost:8008/api/messages/101/") as response:
+        async with session.get("http://localhost:8004/api/messages/101/") as response:
             if response.status == 200:
                 data = await response.json()
                 for msg in data:
@@ -31,7 +31,7 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message.text
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            "http://localhost:8008/api/messages/101/send/",
+            "http://localhost:8004/api/messages/101/send/",
             json={'text': message, 'is_from_customer': False}
         ) as response:
             if response.status == 201:

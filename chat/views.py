@@ -1,35 +1,32 @@
-# chat/views.py
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from django.shortcuts import render
+from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status
+from qr_auth.models import Room
 from .models import Message
 from .serializers import MessageSerializer
-from qr_auth.models import Room
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def get_messages(request, room_number):
-    try:
-        room = Room.objects.get(number=room_number, is_active=True)
-        messages = Message.objects.filter(chatroom=room)
-        serializer = MessageSerializer(messages, many=True)
-        return Response(serializer.data, status=200)
-    except Room.DoesNotExist:
-        return Response({'error': 'Xona topilmadi'}, status=404)
+class MessageListView(APIView):
+    def get(self, request, room_number):
+        try:
+            room = Room.objects.get(number=room_number)
+            messages = Message.objects.filter(chatroom=room)
+            serializer = MessageSerializer(messages, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Room.DoesNotExist:
+            return Response({"error": "Xona topilmadi"}, status=status.HTTP_404_NOT_FOUND)
 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def send_message(request, room_number):
-    try:
-        room = Room.objects.get(number=room_number, is_active=True)
-        serializer = MessageSerializer(data={
-            'chatroom': room.id,
-            'text': request.data.get('text'),
-            'is_from_customer': request.data.get('is_from_customer', False)
-        })
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=201)
-        return Response(serializer.errors, status=400)
-    except Room.DoesNotExist:
-        return Response({'error': 'Xona topilmadi'}, status=404)
+class MessageCreateView(APIView):
+    def post(self, request, room_number):
+        try:
+            room = Room.objects.get(number=room_number)
+            serializer = MessageSerializer(data=request.data)
+            if serializer.is_valid():
+                serializer.save(chatroom=room)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Room.DoesNotExist:
+            return Response({"error": "Xona topilmadi"}, status=status.HTTP_404_NOT_FOUND)
+
+def chat_view(request, room_number):
+    return render(request, 'chat/index.html', {'room_number': room_number})
