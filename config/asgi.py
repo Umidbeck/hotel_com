@@ -1,21 +1,19 @@
-# config/asgi.py
 import os
 import django
-from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
+from django.core.asgi import get_asgi_application  # <-- To‘g‘ri joydan import qilyapmiz
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
-django.setup()  # Django sozlamalarini yuklash
+django.setup()
 
-# Importni kechiktirish uchun faqat URLRouter ichida ishlatamiz
-from chat.routing import websocket_urlpatterns
+import chat.routing  # django.setup() dan keyin
 
 application = ProtocolTypeRouter({
-    "http": get_asgi_application(),
+    "http": get_asgi_application(),  # <-- To‘g‘ri
     "websocket": AuthMiddlewareStack(
         URLRouter(
-            websocket_urlpatterns
+            chat.routing.websocket_urlpatterns
         )
     ),
 })

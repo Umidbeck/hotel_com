@@ -7,3 +7,4 @@ class MessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Message
         fields = ['chatroom', 'text', 'sent_at', 'is_from_customer']
+        read_only_fields = ['chatroom', 'sent_at']
