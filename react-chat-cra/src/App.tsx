@@ -1,10 +1,14 @@
+import React from 'react';
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import WebChatInterface from './WebChatInterface';
 
 const App: React.FC = () => {
   return (
-    <div>
-      <WebChatInterface />
-    </div>
+    <Router>
+      <Routes>
+        <Route path="/chat/:roomNumber" element={<WebChatInterface />} />
+      </Routes>
+    </Router>
   );
 };
 
