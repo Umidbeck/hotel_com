@@ -1,25 +1,26 @@
+# bot.py
 import os
+import django
 import json
 import asyncio
 import datetime
-import django
-import aiohttp
-import websockets
-
+from decouple import config
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from decouple import config
 from asgiref.sync import sync_to_async
-  # models.py da bo'lishi kerak
+import aiohttp
+import websockets
+import channels.layers
 
+# Django init
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'hotel_com.config.settings')
 django.setup()
+
 from qr_auth.models import Room
 
-# ===== ROOM HELPER FUNCTIONS =====
-
+# === ROOM FUNCTIONS ===
 @sync_to_async
-def get_telegram_chat_id(room_number):
+def get_chat_id_by_room(room_number: str):
     try:
         room = Room.objects.get(number=room_number)
         return room.telegram_chat_id
@@ -27,107 +28,111 @@ def get_telegram_chat_id(room_number):
         return None
 
 @sync_to_async
-def get_room_by_chat_id(chat_id):
-    try:
-        return Room.objects.get(telegram_chat_id=chat_id)
-    except Room.DoesNotExist:
-        return None
+def get_all_rooms():
+    return list(Room.objects.all().values_list('number', flat=True))
 
 @sync_to_async
-def create_or_update_room(number, chat_id):
+def save_or_update_room(number: str, chat_id: str):
     room, created = Room.objects.get_or_create(number=number)
     room.telegram_chat_id = chat_id
     room.save()
     return created
 
-# ===== COMMAND HANDLERS =====
-
+# === COMMAND HANDLERS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Xush kelibsiz! /addroom bilan xonani bog‘lang.")
+    await update.message.reply_text("Xush kelibsiz! /addroom bilan xona ulang.")
 
-async def add_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def addroom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if len(args) != 2:
         await update.message.reply_text("❗ Format: /addroom <xona_raqami> <chat_id>")
         return
 
     room_number = args[0]
-    telegram_chat_id = int(args[1])
+    telegram_chat_id = args[1]
 
-    created = await create_or_update_room(room_number, telegram_chat_id)
+    created = await save_or_update_room(room_number, telegram_chat_id)
     if created:
         await update.message.reply_text(f"✅ Yangi xona yaratildi: {room_number}")
     else:
-        await update.message.reply_text(f"♻️ Xona yangilandi: {room_number}")
+        await update.message.reply_text(f"ℹ️ Xona yangilandi: {room_number}")
 
-# ===== MESSAGE HANDLER FROM TELEGRAM GROUP =====
+# === MESSAGE HANDLER ===
+# bot.py ichida, reply() funksiyasini yangilang:
 
-async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+
+    # 1. Bot yoki '[web]' xabarlar — e’tiborsiz qoldiramiz
+    if message.from_user.is_bot or message.text.startswith('[web]'):
         return
 
-    chat_id = update.message.chat_id
-    message = update.message.text
-    room = await get_room_by_chat_id(chat_id)
-    if not room:
-        await update.message.reply_text("❗ Ushbu guruh ro'yxatdan o'tmagan.")
+    text = message.text.strip()
+    if not text:
         return
 
-    room_number = room.number
-    ws_uri = f"ws://localhost:8000/ws/chat/{room_number}/"
+    chat_id = str(message.chat_id)
 
     try:
-        async with websockets.connect(ws_uri) as websocket:
-            await websocket.send(json.dumps({
-                'message': message,
-                'sender': 'bot',
-                'time': datetime.datetime.now().strftime('%H:%M')
-            }))
+        room = await sync_to_async(Room.objects.get)(telegram_chat_id=chat_id)
+        room_number = room.number
+    except Room.DoesNotExist:
+        await message.reply_text("❌ Bu guruh ro'yxatdan o'tmagan.")
+        return
+
+    # Guruhdan chatga WebSocket orqali xabar yuboramiz
+    try:
+        channel_layer = channels.layers.get_channel_layer()
+        await channel_layer.group_send(f"chat_{room_number}", {
+            'type': 'chat_message',
+            'message': text,
+            'sender': 'bot',
+            'time': datetime.datetime.now().strftime('%H:%M')
+        })
+        print(f"✅ Guruhdan kelgan xabar WebChatga yuborildi (xona {room_number})")
     except Exception as e:
-        print(f"❌ WebSocketga yuborishda xato: {e}")
+        print(f"[channel_layer xato]: {e}")
 
-# ===== LISTEN WEBSOCKET AND SEND TO TELEGRAM GROUP =====
-
-async def listen_websockets_and_forward(app: Application):
-    while True:
-        rooms = await sync_to_async(list)(Room.objects.all())
-        for room in rooms:
-            room_number = room.number
-            telegram_chat_id = room.telegram_chat_id
-            ws_uri = f"ws://localhost:8000/ws/chat/{room_number}/"
-
-            asyncio.create_task(forward_ws_to_telegram(ws_uri, telegram_chat_id, app))
-        await asyncio.sleep(10)  # Har 10 sekundda tekshir
-
-async def forward_ws_to_telegram(ws_uri, chat_id, app):
+# === WEBSOCKET LISTENER ===
+async def websocket_listener(room_number: str, chat_id: str, bot):
+    uri = f"ws://localhost:8000/ws/chat/{room_number}/"
     while True:
         try:
-            async with websockets.connect(ws_uri) as websocket:
-                print(f"✅ WebSocket ulandi: {ws_uri}")
-                while True:
-                    msg = await websocket.recv()
-                    data = json.loads(msg)
-                    if data.get("message"):
-                        await app.bot.send_message(chat_id=chat_id, text=data["message"])
+            async with websockets.connect(uri) as websocket:
+                print(f"✅ WebSocket ulandi: {uri}")
+                async for message in websocket:
+                    try:
+                        data = json.loads(message)
+
+                        # 👇 Faqat mijoz (me)dan kelgan xabarni yuboramiz guruhga
+                        if data.get('sender') == 'me' and 'message' in data:
+                            await bot.send_message(chat_id=chat_id, text=data['message'])
+
+                    except Exception as e:
+                        print(f"Xabarni o‘qishda xato: {e}")
         except Exception as e:
-            print(f"🔁 WS uzildi ({ws_uri}): {e}")
-            await asyncio.sleep(3)
+            print(f"🔁 WS uzildi ({uri}): {e}")
+            await asyncio.sleep(10)
 
-# ===== MAIN FUNCTION =====
-
+# === RUN BOT ===
 def main():
-    app = Application.builder().token(config("BOT_TOKEN")).build()
+    app = Application.builder().token(config('BOT_TOKEN')).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addroom", add_room))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_message))
+    app.add_handler(CommandHandler("addroom", addroom))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply))
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(listen_websockets_and_forward(app))
+    async def start_ws_listeners(application):
+        rooms = await get_all_rooms()
+        for room_number in rooms:
+            chat_id = await get_chat_id_by_room(room_number)
+            if chat_id:
+                asyncio.create_task(websocket_listener(room_number, chat_id, application.bot))
 
-    print("🤖 Bot ishga tushdi...")
+    app.post_init = start_ws_listeners
+
     app.run_polling()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+
