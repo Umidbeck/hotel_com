@@ -3,6 +3,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 
 from qr_auth.models import Room
+import uuid
 
 User = get_user_model()
 
@@ -33,6 +34,7 @@ class Message(models.Model):
     text = models.TextField()
     sent_at = models.DateTimeField(auto_now_add=True)
     is_from_customer = models.BooleanField(default=True)
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)  # ✅ Qo‘shildi
 
     def __str__(self):
         return f"{self.chatroom} - {self.sent_at}"

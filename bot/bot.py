@@ -8,9 +8,10 @@ from decouple import config
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from asgiref.sync import sync_to_async
-import aiohttp
 import websockets
 import channels.layers
+import aiohttp
+import uuid
 
 # Django init
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'hotel_com.config.settings')
@@ -57,13 +58,10 @@ async def addroom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"ℹ️ Xona yangilandi: {room_number}")
 
-# === MESSAGE HANDLER ===
-# bot.py ichida, reply() funksiyasini yangilang:
-
+# === TELEGRAM ➡ WebSocket
 async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
 
-    # 1. Bot yoki '[web]' xabarlar — e’tiborsiz qoldiramiz
     if message.from_user.is_bot or message.text.startswith('[web]'):
         return
 
@@ -80,20 +78,34 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("❌ Bu guruh ro'yxatdan o'tmagan.")
         return
 
-    # Guruhdan chatga WebSocket orqali xabar yuboramiz
+    # ✅ UUID yaratamiz
+    message_id = str(uuid.uuid4())
+
     try:
         channel_layer = channels.layers.get_channel_layer()
         await channel_layer.group_send(f"chat_{room_number}", {
             'type': 'chat_message',
+            'id': message_id,  # ⬅️ qo‘shildi
             'message': text,
             'sender': 'bot',
             'time': datetime.datetime.now().strftime('%H:%M')
         })
         print(f"✅ Guruhdan kelgan xabar WebChatga yuborildi (xona {room_number})")
-    except Exception as e:
-        print(f"[channel_layer xato]: {e}")
 
-# === WEBSOCKET LISTENER ===
+        # 🔽 API orqali saqlash
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                f"http://localhost:8000/api/messages/{room_number}/send/",
+                json={
+                    "text": text,
+                    "is_from_customer": False,
+                    "uuid": message_id  # ⬅️ saqlash uchun ham yuboramiz
+                }
+            )
+
+    except Exception as e:
+        print(f"[channel_layer yoki API xato]: {e}")
+# === WebSocket ➡ Telegram
 async def websocket_listener(room_number: str, chat_id: str, bot):
     uri = f"ws://localhost:8000/ws/chat/{room_number}/"
     while True:
@@ -104,7 +116,7 @@ async def websocket_listener(room_number: str, chat_id: str, bot):
                     try:
                         data = json.loads(message)
 
-                        # 👇 Faqat mijoz (me)dan kelgan xabarni yuboramiz guruhga
+                        # Faqat mijozdan kelgan xabarni Telegram guruhga yuboramiz
                         if data.get('sender') == 'me' and 'message' in data:
                             await bot.send_message(chat_id=chat_id, text=data['message'])
 
@@ -114,7 +126,7 @@ async def websocket_listener(room_number: str, chat_id: str, bot):
             print(f"🔁 WS uzildi ({uri}): {e}")
             await asyncio.sleep(10)
 
-# === RUN BOT ===
+# === BOT START
 def main():
     app = Application.builder().token(config('BOT_TOKEN')).build()
 
@@ -130,7 +142,6 @@ def main():
                 asyncio.create_task(websocket_listener(room_number, chat_id, application.bot))
 
     app.post_init = start_ws_listeners
-
     app.run_polling()
 
 if __name__ == "__main__":

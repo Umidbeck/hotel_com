@@ -1,4 +1,3 @@
-// src/ChatApp.tsx
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Smile, Paperclip, MoreVertical, Phone, Video, ArrowLeft } from 'lucide-react';
 import './styles.css';
@@ -7,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 interface Message {
   id: string;
+  uuid: string;
   text: string;
   sender: 'me' | 'other';
   time: string;
@@ -21,15 +21,14 @@ const ChatApp: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<W3CWebSocket | null>(null);
   const reconnectRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingMessages = useRef<Set<string>>(new Set());
 
-  // Scroll to bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(scrollToBottom, [messages]);
 
-  // Connect WebSocket
   const connectWebSocket = () => {
     const ws = new W3CWebSocket(`ws://localhost:8000/ws/chat/${ROOM_NUMBER}/`);
     clientRef.current = ws;
@@ -42,17 +41,25 @@ const ChatApp: React.FC = () => {
     ws.onmessage = (message) => {
       try {
         const data = JSON.parse(message.data.toString());
-        if (!data.message) return;
+        if (!data.message || !data.uuid) return;
 
         const newMsg: Message = {
           id: uuidv4(),
+          uuid: data.uuid,
           text: data.message,
           sender: data.sender === 'bot' ? 'other' : 'me',
           time: data.time || new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }),
         };
 
-        setMessages((prev) => [...prev, newMsg]);
-        setIsTyping(false);
+        setMessages((prev) => {
+          const isDuplicate = prev.some((m) => m.uuid === newMsg.uuid);
+          if (isDuplicate) return prev;
+          return [...prev, newMsg];
+        });
+
+        // yuborilgandan keyin typing holatni o‘chir
+        pendingMessages.current.delete(data.uuid);
+        setIsTyping(pendingMessages.current.size > 0);
       } catch (e) {
         console.error('Xatolik:', e);
       }
@@ -66,30 +73,53 @@ const ChatApp: React.FC = () => {
     ws.onerror = (err) => {
       console.error('WebSocket xato:', err);
       ws.close();
+      reconnectRef.current = setTimeout(connectWebSocket, 5000);
     };
   };
 
   useEffect(() => {
+    const fetchMessages = async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/api/messages/${ROOM_NUMBER}/`);
+        const data = await res.json();
+
+        const loaded = data.map((msg: any) => ({
+          id: uuidv4(),
+          uuid: msg.uuid || uuidv4(),
+          text: msg.text,
+          sender: msg.is_from_customer ? 'me' : 'other',
+          time: new Date(msg.sent_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }),
+        }));
+
+        setMessages(loaded);
+      } catch (err) {
+        console.error('❌ Tarixni olishda xato:', err);
+      }
+    };
+
+    fetchMessages();
     connectWebSocket();
+
     return () => {
       if (clientRef.current) clientRef.current.close();
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
   }, []);
 
-  // Send message
-const handleSendMessage = () => {
+  const handleSendMessage = () => {
     if (!newMessage.trim() || !clientRef.current || clientRef.current.readyState !== WebSocket.OPEN) return;
 
+    const uuid = uuidv4();
     const msg = {
-        message: newMessage,
-        sender: 'me'
+      message: newMessage,
+      uuid,
     };
 
     clientRef.current.send(JSON.stringify(msg));
-    setNewMessage('');
+    pendingMessages.current.add(uuid);
     setIsTyping(true);
-};
+    setNewMessage('');
+  };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -165,3 +195,7 @@ const handleSendMessage = () => {
 };
 
 export default ChatApp;
+
+
+
+

@@ -22,17 +22,24 @@ INSTALLED_APPS = [
     'chat.apps.ChatConfig',  # Chat ilovasini qo‘shing
     'qr_auth',  # qr_auth ilovasini qo‘shing
     'channels',  # Channels uchun
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+
 ]
+CORS_ALLOW_ALL_ORIGINS = True  # faqat dev uchun, prod uchun domen belgilang!
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:3000",  # React frontend ishlayotgan port
+# ]
 
 ROOT_URLCONF = 'config.urls'
 
