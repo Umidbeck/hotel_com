@@ -1,3 +1,4 @@
+#chat/views.py
 import uuid
 
 from .serializers import MessageSerializer
@@ -79,4 +80,13 @@ def get_message_history(request, room_number):
         return Response(serializer.data)
     except Room.DoesNotExist:
         return Response({'error': 'Xona topilmadi.'}, status=404)
+
+@api_view(['DELETE'])
+def delete_room_messages(request, room_number):
+    try:
+        room = Room.objects.get(number=room_number)
+        Message.objects.filter(chatroom=room).delete()
+        return Response({"status": "cleared"})
+    except Room.DoesNotExist:
+        return Response({'error': 'Xona topilmadi'}, status=404)
 

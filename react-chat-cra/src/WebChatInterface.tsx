@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { Send, Smile, Paperclip, MoreVertical, Phone, Video, ArrowLeft } from 'lucide-react';
 import './styles.css';
 import { w3cwebsocket as W3CWebSocket } from 'websocket';
@@ -12,9 +13,10 @@ interface Message {
   time: string;
 }
 
-const ROOM_NUMBER = '101';
-
 const ChatApp: React.FC = () => {
+  const { roomNumber } = useParams<{ roomNumber: string }>();
+  const ROOM_NUMBER = roomNumber || 'default';
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -34,7 +36,7 @@ const ChatApp: React.FC = () => {
     clientRef.current = ws;
 
     ws.onopen = () => {
-      console.log('✅ WebSocket ulandi');
+      console.log(`✅ WebSocket ulandi: xona ${ROOM_NUMBER}`);
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
 
@@ -57,7 +59,6 @@ const ChatApp: React.FC = () => {
           return [...prev, newMsg];
         });
 
-        // yuborilgandan keyin typing holatni o‘chir
         pendingMessages.current.delete(data.uuid);
         setIsTyping(pendingMessages.current.size > 0);
       } catch (e) {
@@ -66,7 +67,7 @@ const ChatApp: React.FC = () => {
     };
 
     ws.onclose = () => {
-      console.warn('🔁 WebSocket uzildi. Qayta ulanmoqda...');
+      console.warn(`🔁 WebSocket uzildi. Qayta ulanmoqda... (xona: ${ROOM_NUMBER})`);
       reconnectRef.current = setTimeout(connectWebSocket, 5000);
     };
 
@@ -104,7 +105,7 @@ const ChatApp: React.FC = () => {
       if (clientRef.current) clientRef.current.close();
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
-  }, []);
+  }, [ROOM_NUMBER]);
 
   const handleSendMessage = () => {
     if (!newMessage.trim() || !clientRef.current || clientRef.current.readyState !== WebSocket.OPEN) return;
@@ -195,6 +196,7 @@ const ChatApp: React.FC = () => {
 };
 
 export default ChatApp;
+
 
 
 

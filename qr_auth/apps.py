@@ -1,3 +1,4 @@
+#qr_auth/apps.py
 from django.apps import AppConfig
 
 class QrAuthConfig(AppConfig):
