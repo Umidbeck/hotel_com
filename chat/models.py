@@ -34,7 +34,23 @@ class Message(models.Model):
     text = models.TextField()
     sent_at = models.DateTimeField(auto_now_add=True)
     is_from_customer = models.BooleanField(default=True)
-    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)  # ✅ Qo‘shildi
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+
+    # yangi maydonlar
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('delivered', 'Delivered'),
+        ('failed', 'Failed'),
+    ]
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    retry_count = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['sent_at']
+        indexes = [
+            models.Index(fields=['chatroom', 'status']),
+            models.Index(fields=['uuid']),
+        ]
 
     def __str__(self):
-        return f"{self.chatroom} - {self.sent_at}"
+        return f"{self.chatroom} – {self.text[:30]}"

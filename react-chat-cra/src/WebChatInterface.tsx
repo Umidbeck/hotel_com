@@ -1,9 +1,14 @@
-import React, { useState, useRef, useEffect } from 'react';
+// src/WebChatInterface.tsx
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Send, Smile, Paperclip, MoreVertical, Phone, Video, ArrowLeft } from 'lucide-react';
+import { Send, ArrowLeft } from 'lucide-react';
 import './styles.css';
 import { w3cwebsocket as W3CWebSocket } from 'websocket';
 import { v4 as uuidv4 } from 'uuid';
+
+// Backend → .env yoki default
+const BACKEND_URL = process.env.REACT_APP_BACKEND || 'http://localhost:8000';
+const WS_URL      = BACKEND_URL.replace('http', 'ws');
 
 interface Message {
   id: string;
@@ -11,140 +16,141 @@ interface Message {
   text: string;
   sender: 'me' | 'other';
   time: string;
+  status?: 'pending' | 'delivered' | 'failed';
 }
 
 const ChatApp: React.FC = () => {
   const { roomNumber } = useParams<{ roomNumber: string }>();
-  const ROOM_NUMBER = roomNumber || 'default';
+  const ROOM = roomNumber || 'default';
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const clientRef = useRef<W3CWebSocket | null>(null);
+  const wsRef = useRef<W3CWebSocket | null>(null);
   const reconnectRef = useRef<NodeJS.Timeout | null>(null);
-  const pendingMessages = useRef<Set<string>>(new Set());
 
-  const scrollToBottom = () => {
+  /* ---------- scroll ---------- */
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, []);
 
-  useEffect(scrollToBottom, [messages]);
+  /* ---------- tarixni bazadan yuklash ---------- */
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/messages/${ROOM}/`);
+      if (!res.ok) throw new Error('Network error');
+      const data = await res.json();
+      const loaded: Message[] = data.map((m: any) => ({
+        id: uuidv4(),
+        uuid: m.uuid,
+        text: m.text,
+        sender: m.is_from_customer ? 'me' : 'other',
+        // to‘g‘ri vaqt
+        time: new Date(m.sent_at).toLocaleTimeString('uz-UZ', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        status: 'delivered',
+      }));
+      setMessages(loaded);
+    } catch (e) {
+      console.error('❌ Tarixni olishda xato:', e);
+    }
+  }, [ROOM]);
 
-  const connectWebSocket = () => {
-    const ws = new W3CWebSocket(`ws://localhost:8000/ws/chat/${ROOM_NUMBER}/`);
-    clientRef.current = ws;
+  /* ---------- WebSocket ---------- */
+  const connectWS = useCallback(() => {
+    const ws = new W3CWebSocket(`${WS_URL}/ws/chat/${ROOM}/`);
+    wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log(`✅ WebSocket ulandi: xona ${ROOM_NUMBER}`);
+      console.log('✅ WS ulandi');
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
 
-    ws.onmessage = (message) => {
+    ws.onmessage = (msg) => {
       try {
-        const data = JSON.parse(message.data.toString());
-        if (!data.message || !data.uuid) return;
-
-        const newMsg: Message = {
+        const data = JSON.parse(msg.data.toString());
+        const incoming: Message = {
           id: uuidv4(),
           uuid: data.uuid,
           text: data.message,
           sender: data.sender === 'bot' ? 'other' : 'me',
-          time: data.time || new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }),
+          time: new Date(data.time || Date.now()).toLocaleTimeString('uz-UZ', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          status: 'delivered',
         };
 
         setMessages((prev) => {
-          const isDuplicate = prev.some((m) => m.uuid === newMsg.uuid);
-          if (isDuplicate) return prev;
-          return [...prev, newMsg];
+          if (prev.some((m) => m.uuid === incoming.uuid)) return prev; // duplicate oldini olish
+          return [...prev, incoming];
         });
-
-        pendingMessages.current.delete(data.uuid);
-        setIsTyping(pendingMessages.current.size > 0);
       } catch (e) {
-        console.error('Xatolik:', e);
+        console.error(e);
       }
     };
 
     ws.onclose = () => {
-      console.warn(`🔁 WebSocket uzildi. Qayta ulanmoqda... (xona: ${ROOM_NUMBER})`);
-      reconnectRef.current = setTimeout(connectWebSocket, 5000);
+      console.warn('🔁 WS uzildi');
+      reconnectRef.current = setTimeout(connectWS, 5000);
     };
 
     ws.onerror = (err) => {
-      console.error('WebSocket xato:', err);
+      console.error(err);
       ws.close();
-      reconnectRef.current = setTimeout(connectWebSocket, 5000);
     };
-  };
+  }, [ROOM]);
 
   useEffect(() => {
-    const fetchMessages = async () => {
-      try {
-        const res = await fetch(`http://localhost:8000/api/messages/${ROOM_NUMBER}/`);
-        const data = await res.json();
-
-        const loaded = data.map((msg: any) => ({
-          id: uuidv4(),
-          uuid: msg.uuid || uuidv4(),
-          text: msg.text,
-          sender: msg.is_from_customer ? 'me' : 'other',
-          time: new Date(msg.sent_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }),
-        }));
-
-        setMessages(loaded);
-      } catch (err) {
-        console.error('❌ Tarixni olishda xato:', err);
-      }
-    };
-
-    fetchMessages();
-    connectWebSocket();
-
+    loadHistory();
+    connectWS();
     return () => {
-      if (clientRef.current) clientRef.current.close();
+      wsRef.current?.close();
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
-  }, [ROOM_NUMBER]);
+  }, [loadHistory, connectWS]);
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !clientRef.current || clientRef.current.readyState !== WebSocket.OPEN) return;
+  /* ---------- send message ---------- */
+  const sendMessage = () => {
+    const text = newMessage.trim();
+    if (!text || !wsRef.current) return;
 
     const uuid = uuidv4();
-    const msg = {
-      message: newMessage,
+    wsRef.current.send(JSON.stringify({
+      message: text,
       uuid,
-    };
-
-    clientRef.current.send(JSON.stringify(msg));
-    pendingMessages.current.add(uuid);
-    setIsTyping(true);
+      room: ROOM,         // ✅ har safar to‘g‘ri room
+    }));
     setNewMessage('');
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  /* ---------- keyDown ---------- */
+  const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage();
+      sendMessage();
     }
   };
 
+  /* ---------- UI ---------- */
   return (
     <div className="chat-container">
       <div className="chat-header">
-        <button className="back-btn"><ArrowLeft size={20} /></button>
+        <button className="back-btn">
+          <ArrowLeft size={20} />
+        </button>
         <div className="contact-info">
-          <img src="https://images.unsplash.com/photo-1494790108755-2616c964c955?w=45&h=45&fit=crop&crop=face"
-            alt="Admin" className="contact-avatar" />
+          <img
+            src="https://images.unsplash.com/photo-1494790108755-2616c964c955?w=45&h=45&fit=crop&crop=face"
+            alt="Admin"
+            className="contact-avatar"
+          />
           <div className="contact-details">
             <h3 className="contact-name">Admin</h3>
             <p className="contact-status">Onlayn</p>
           </div>
-        </div>
-        <div className="header-actions">
-          <button className="header-btn"><Phone size={20} /></button>
-          <button className="header-btn"><Video size={20} /></button>
-          <button className="header-btn"><MoreVertical size={20} /></button>
         </div>
       </div>
 
@@ -159,35 +165,19 @@ const ChatApp: React.FC = () => {
             </div>
           </div>
         ))}
-        {isTyping && (
-          <div className="typing-indicator">
-            <img src="/media/arzum.png" alt="Avatar" className="message-avatar" />
-            <div className="typing-dots">
-              <div className="typing-dot"></div>
-              <div className="typing-dot"></div>
-              <div className="typing-dot"></div>
-            </div>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 
       <div className="chat-input">
-        <div className="input-container">
-          <textarea
-            className="message-input"
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Xabar yozing..."
-            rows={1}
-          />
-          <div className="input-actions">
-            <button className="input-btn"><Paperclip size={20} /></button>
-            <button className="input-btn"><Smile size={20} /></button>
-          </div>
-        </div>
-        <button className="send-btn" onClick={handleSendMessage} disabled={!newMessage.trim()}>
+        <textarea
+          className="message-input"
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          onKeyPress={handleKey}
+          placeholder="Xabar yozing..."
+          rows={1}
+        />
+        <button className="send-btn" onClick={sendMessage} disabled={!newMessage.trim()}>
           <Send size={20} />
         </button>
       </div>
@@ -196,7 +186,6 @@ const ChatApp: React.FC = () => {
 };
 
 export default ChatApp;
-
 
 
 
