@@ -1,4 +1,3 @@
-// src/WebChatInterface.tsx
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { Send, ArrowLeft } from 'lucide-react';
@@ -8,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 // Backend → .env yoki default
 const BACKEND_URL = process.env.REACT_APP_BACKEND || 'http://localhost:8000';
-const WS_URL      = BACKEND_URL.replace('http', 'ws');
+const WS_URL = BACKEND_URL.replace('http', 'ws');
 
 interface Message {
   id: string;
@@ -45,7 +44,6 @@ const ChatApp: React.FC = () => {
         uuid: m.uuid,
         text: m.text,
         sender: m.is_from_customer ? 'me' : 'other',
-        // to‘g‘ri vaqt
         time: new Date(m.sent_at).toLocaleTimeString('uz-UZ', {
           hour: '2-digit',
           minute: '2-digit',
@@ -84,21 +82,21 @@ const ChatApp: React.FC = () => {
         };
 
         setMessages((prev) => {
-          if (prev.some((m) => m.uuid === incoming.uuid)) return prev; // duplicate oldini olish
+          if (prev.some((m) => m.uuid === incoming.uuid)) return prev; // Duplicate oldini olish
           return [...prev, incoming];
         });
       } catch (e) {
-        console.error(e);
+        console.error('Xatolik:', e);
       }
     };
 
     ws.onclose = () => {
-      console.warn('🔁 WS uzildi');
+      console.warn('🔁 WS uzildi, reconnect qilinmoqda...');
       reconnectRef.current = setTimeout(connectWS, 5000);
     };
 
     ws.onerror = (err) => {
-      console.error(err);
+      console.error('❌ WS xato:', err);
       ws.close();
     };
   }, [ROOM]);
@@ -121,9 +119,25 @@ const ChatApp: React.FC = () => {
     wsRef.current.send(JSON.stringify({
       message: text,
       uuid,
-      room: ROOM,         // ✅ har safar to‘g‘ri room
+      sender: 'me', // ✅ MUHIM: bu bo‘lmasa bot yubormaydi
+      room: ROOM,
     }));
+
+    const outgoing: Message = {
+      id: uuidv4(),
+      uuid,
+      text,
+      sender: 'me',
+      time: new Date().toLocaleTimeString('uz-UZ', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      status: 'pending',
+    };
+
+    setMessages((prev) => [...prev, outgoing]);
     setNewMessage('');
+    scrollToBottom();
   };
 
   /* ---------- keyDown ---------- */
@@ -186,6 +200,7 @@ const ChatApp: React.FC = () => {
 };
 
 export default ChatApp;
+
 
 
 

@@ -1,196 +1,217 @@
-#bot/bot.py
+# bot/bot.py
 import os
 import django
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
-import json
-import asyncio
-import uuid
-import datetime
+import json, asyncio, re
 from decouple import config
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
 from asgiref.sync import sync_to_async
-import aiohttp
-import channels.layers
 import websockets
+from telegram.request import HTTPXRequest
 
 from qr_auth.models import Room
 from chat.models import Message
 
+# === FOYDALANUVCHI HOLATLARI ===
+STATE_CLEAR = "clear_messages"
+STATE_LINK = "get_link"
 
-# ======= DATABASE FUNCTIONS =======
+# === FOYDALI FUNKSIYALAR ===
+def clean_group_id(raw: str) -> str:
+    return re.sub(r'^-100', 'g', raw)
+
 @sync_to_async
-def save_or_update_room(number: str, chat_id: str):
-    room, created = Room.objects.get_or_create(number=number)
-    room.telegram_chat_id = chat_id
-    room.save()
-    return created
+def get_or_create_room_by_chat(chat_id: str, title: str) -> Room:
+    room, _ = Room.objects.get_or_create(
+        number=clean_group_id(chat_id),
+        defaults={"telegram_chat_id": chat_id}
+    )
+    return room
 
 @sync_to_async
 def get_all_rooms():
-    return list(Room.objects.all().values_list('number', flat=True))
+    return list(Room.objects.all())
 
 @sync_to_async
-def get_chat_id_by_room(room_number: str):
-    try:
-        room = Room.objects.get(number=room_number)
-        return room.telegram_chat_id
-    except Room.DoesNotExist:
-        return None
+def get_room_by_number(number: str):
+    return Room.objects.filter(number=number).first()
 
 @sync_to_async
-def delete_messages_in_room(room_number: str):
-    try:
-        room = Room.objects.get(number=room_number)
-        Message.objects.filter(chatroom=room).delete()
-        return True
-    except Room.DoesNotExist:
-        return False
+def clear_web_chat(room: Room) -> int:
+    return Message.objects.filter(chatroom=room).delete()[0]
 
-@sync_to_async
-def get_room_by_chat_id(chat_id: str):
-    try:
-        return Room.objects.get(telegram_chat_id=chat_id)
-    except Room.DoesNotExist:
-        return None
+# === TUGMALAR ===
+ADMIN_KB = ReplyKeyboardMarkup(
+    [[KeyboardButton("📋 Hona ro‘yxati"), KeyboardButton("🔗 Hona linki")]],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
 
+ROOM_KB = lambda rooms: ReplyKeyboardMarkup(
+    [[KeyboardButton(str(r.number))] for r in rooms] + [[KeyboardButton("🔙 Ortga")]],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
 
-# ======= COMMANDS =======
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Bot ishga tushdi. Xonani ro‘yxatdan o‘tkazish uchun:\n\n/register 101")
+ORTGA_KB = ReplyKeyboardMarkup(
+    [[KeyboardButton("🔙 Ortga")]],
+    resize_keyboard=True,
+    one_time_keyboard=False,
+)
 
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
+# === /start komandasi ===
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type in ("group", "supergroup"):
+        return
+    await update.message.reply_text("👋 Admin! Tugmalardan birini tanlang:", reply_markup=ADMIN_KB)
+
+# === /register komandasi ===
+async def register(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("❗ Bu buyruq faqat guruhda ishlaydi.")
+        return
+
+    args = ctx.args
     if len(args) != 1:
-        await update.message.reply_text("❗ Format: /register <xona_raqami>")
+        await update.message.reply_text("❗ Format: /register <raqam>")
         return
 
     room_number = args[0]
     chat_id = str(update.effective_chat.id)
+    clean_id = clean_group_id(chat_id)
 
-    created = await save_or_update_room(room_number, chat_id)
-    msg = f"✅ Yangi xona yaratildi: {room_number}" if created else f"♻️ Xona yangilandi: {room_number}"
-    await update.message.reply_text(msg)
+    room, created = await sync_to_async(Room.objects.get_or_create)(
+        number=room_number,
+        defaults={"telegram_chat_id": clean_id}
+    )
+    if not created:
+        room.telegram_chat_id = clean_id
+        await sync_to_async(room.save)()
 
-async def rooms(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    all_rooms = await get_all_rooms()
-    if not all_rooms:
-        await update.message.reply_text("📭 Hali xona yo‘q.")
+    url = f"http://localhost:3000/chat/{clean_id}"
+    await update.message.reply_text(
+        f"✅ Xona {room_number} qo‘shildi.\n🔗 URL: {url}"
+    )
+
+# === JAVOBLARNI QABUL QILISH ===
+async def handle_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.type in ("group", "supergroup"):
         return
 
-    buttons = [
-        [InlineKeyboardButton(f"Xona {room}", callback_data=f"room_{room}")]
-        for room in all_rooms
-    ]
-    markup = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("📋 Xonalar ro‘yxati:", reply_markup=markup)
+    text = update.message.text.strip()
 
-
-# ======= CALLBACK HANDLER =======
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    if data.startswith("room_"):
-        room_number = data.split("_")[1]
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑 Xabarlarni o‘chirish", callback_data=f"clear_{room_number}")],
-        ])
-        await query.edit_message_text(f"Xona: {room_number}", reply_markup=markup)
-
-    elif data.startswith("clear_"):
-        room_number = data.split("_")[1]
-        success = await delete_messages_in_room(room_number)
-        msg = f"🧹 Xabarlar o‘chirildi: {room_number}" if success else "❌ Xona topilmadi."
-        await query.edit_message_text(msg)
-
-
-# ======= MESSAGE HANDLER (Telegram ➡ Web) =======
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    chat_id = str(message.chat_id)
-    text = message.text.strip()
-
-    if message.from_user.is_bot or not text or text.startswith('[web]'):
+    # 📋 Hona ro'yxati tanlandi
+    if text == "📋 Hona ro‘yxati":
+        ctx.user_data["state"] = STATE_CLEAR
+        rooms = await get_all_rooms()
+        if not rooms:
+            await update.message.reply_text("📭 Hali xona yo‘q.", reply_markup=ADMIN_KB)
+            return
+        rooms_text = "\n".join(f"• {r.number}" for r in rooms)
+        await update.message.reply_text(
+            f"📋 Mavjud honalar:\n{rooms_text}\n\n"
+            f"Xabarlarni o‘chirish uchun xona raqamini yozing:",
+            reply_markup=ORTGA_KB
+        )
         return
 
-    room = await get_room_by_chat_id(chat_id)
+    # 🔗 Hona linki tanlandi
+    if text == "🔗 Hona linki":
+        ctx.user_data["state"] = STATE_LINK
+        rooms = await get_all_rooms()
+        if not rooms:
+            await update.message.reply_text("📭 Hona yo‘q.", reply_markup=ADMIN_KB)
+            return
+        await update.message.reply_text(
+            "Linkni olish uchun xona raqamini tanlang:",
+            reply_markup=ROOM_KB(rooms)
+        )
+        return
+
+    # 🔙 Ortga bosildi
+    if text == "🔙 Ortga":
+        ctx.user_data["state"] = None
+        await update.message.reply_text("🔙 Bosh menyuga qaytdingiz.", reply_markup=ADMIN_KB)
+        return
+
+    # Foydalanuvchi raqam yubordi
+    room = await get_room_by_number(clean_group_id(text))
     if not room:
-        await message.reply_text("❗ Bu guruh ro‘yxatdan o‘tmagan.")
+        await update.message.reply_text("❌ Xona topilmadi.", reply_markup=ADMIN_KB)
+        ctx.user_data["state"] = None
         return
 
-    uuid_str = str(uuid.uuid4())
+    state = ctx.user_data.get("state")
 
-    try:
-        # WebSocket orqali yuborish
-        channel_layer = channels.layers.get_channel_layer()
-        await channel_layer.group_send(f"chat_{room.number}", {
-            'type': 'chat_message',
-            'message': text,
-            'sender': 'bot',
-            'uuid': uuid_str,
-            'time': datetime.datetime.now().strftime('%H:%M')
-        })
+    # faqat xabarlarni tozalash
+    if state == STATE_CLEAR:
+        deleted = await clear_web_chat(room)
+        await update.message.reply_text(
+            f"✅ {room.number} dagi {deleted} ta xabar tozalandi.",
+            reply_markup=ADMIN_KB
+        )
+        ctx.user_data["state"] = None
+        return
 
-        # API orqali bazaga yozish
-        async with aiohttp.ClientSession() as session:
-            await session.post(f"http://localhost:8000/api/messages/{room.number}/send/", json={
-                "text": text,
-                "is_from_customer": False,
-                "uuid": uuid_str
-            })
+    # faqat link yuborish
+    elif state == STATE_LINK:
+        url = f"http://localhost:3000/chat/{room.telegram_chat_id or room.number}"
+        await update.message.reply_text(
+            f"{url}",
+            reply_markup=ADMIN_KB
+        )
+        ctx.user_data["state"] = None
+        return
 
-    except Exception as e:
-        print(f"[Telegram ➡ WebSocket xato]: {e}")
+    # tugma tanlanmagan holatda noto'g'ri raqam yuborildi
+    else:
+        await update.message.reply_text("ℹ️ Iltimos, tugmalardan foydalaning.", reply_markup=ADMIN_KB)
 
-
-# ======= Web ➡ Telegram Listener =======
-async def start_ws_listeners(application):
-    rooms = await get_all_rooms()
-    for room_number in rooms:
-        chat_id = await get_chat_id_by_room(room_number)
-        if chat_id:
-            asyncio.create_task(websocket_listener(room_number, chat_id, application.bot))
-
-async def websocket_listener(room_number: str, chat_id: str, bot):
-    uri = f"ws://localhost:8000/ws/chat/{room_number}/"
+# === WebSocket listener ===
+async def websocket_listener(room: Room, bot):
+    uri = f"ws://localhost:8000/ws/chat/{room.number}/"
+    target_chat_id = room.telegram_chat_id or room.number
     while True:
         try:
             async with websockets.connect(uri) as ws:
-                print(f"🔗 WS ulandi: {uri}")
-                async for message in ws:
-                    try:
-                        data = json.loads(message)
-                        if data.get('sender') == 'me' and 'message' in data:
-                            await bot.send_message(chat_id=chat_id, text=data['message'])
-                    except Exception as e:
-                        print(f"[WS xabar xatosi]: {e}")
+                async for raw in ws:
+                    data = json.loads(raw)
+                    if data.get("sender") == "me":
+                        await bot.send_message(chat_id=target_chat_id, text=data["message"])
         except Exception as e:
-            print(f"[WS uzildi]: {e}")
+            print(f"[WS retry {room.number}] {e}")
             await asyncio.sleep(5)
 
-
-# ======= BOT START =======
+# === Botni ishga tushirish ===
 def main():
-    app = Application.builder().token(config("BOT_TOKEN")).build()
+    request = HTTPXRequest(connect_timeout=10, read_timeout=10)
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("register", register))
-    app.add_handler(CommandHandler("rooms", rooms))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(CallbackQueryHandler(handle_callback))
+    app = (
+        Application.builder()
+        .token(config("BOT_TOKEN"))
+        .request(request)
+        .build()
+    )
 
-    app.post_init = start_ws_listeners
+    app.add_handlers([
+        CommandHandler("start", start),
+        CommandHandler("register", register),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reply),
+    ])
+
+    async def post_init(app):
+        rooms = await sync_to_async(list)(Room.objects.all())
+        for room in rooms:
+            asyncio.create_task(websocket_listener(room, app.bot))
+
+    app.post_init = post_init
+
     app.run_polling()
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+#chat/views.py
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
@@ -6,57 +7,56 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
 from qr_auth.models import Room
+from . import serializers
 from .models import Message
-from .serializers import MessageSerializer
+from rest_framework import serializers
 from .utils import enqueue_if_offline
+
+class MessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Message
+        fields = ['text', 'sent_at', 'is_from_customer', 'uuid']
 
 @api_view(['POST'])
 def send_message(request, room_number):
     text = request.data.get('text')
-    is_from_customer = request.data.get('is_from_customer', True)
-    uuid_value = request.data.get('uuid')
-
-    if not text or not uuid_value:
-        return Response({'error': 'Text yoki UUID kerak'}, status=400)
-
+    uuid_val = request.data.get('uuid')
+    if not text or not uuid_val:
+        return Response({'error': 'text & uuid required'}, status=400)
     try:
         room = Room.objects.get(number=room_number)
     except Room.DoesNotExist:
-        return Response({'error': 'Xona topilmadi'}, status=404)
-
-    # duplicate oldini olish
-    if Message.objects.filter(uuid=uuid_value).exists():
+        return Response({'error': 'Room not found'}, status=404)
+    if Message.objects.filter(uuid=uuid_val).exists():
         return Response({'status': 'duplicate'}, status=200)
-
-    # saqlash
-    msg = Message.objects.create(
+    Message.objects.create(
         chatroom=room,
         text=text,
-        uuid=uuid_value,
-        is_from_customer=is_from_customer
+        uuid=uuid_val,
+        is_from_customer=True,
+        status="delivered"
     )
-
-    # WebSocketga yuborish
     channel_layer = get_channel_layer()
-    success = async_to_sync(channel_layer.group_send)(
+    async_to_sync(channel_layer.group_send)(
         f"chat_{room_number}",
         {
             'type': 'chat_message',
             'message': text,
-            'sender': 'bot' if not is_from_customer else 'me',
-            'time': msg.sent_at.strftime('%H:%M'),
-            'uuid': str(uuid_value)
+            'sender': 'me',
+            'time': timezone.now().strftime('%H:%M'),
+            'uuid': uuid_val,
         }
     )
-
-    if not success:
-        enqueue_if_offline(room_number, text, uuid_value)
-
-    return Response({'status': 'delivered' if success else 'pending'}, status=201)
+    return Response({'status': 'delivered'})
 
 @api_view(['GET'])
 def get_message_history(request, room_number):
     msgs = Message.objects.filter(chatroom__number=room_number).order_by('sent_at')
-    serializer = MessageSerializer(msgs, many=True)
-    return Response(serializer.data)
+    return Response(MessageSerializer(msgs, many=True).data)
+
+
+@api_view(['GET'])
+def rooms_list(request):
+    rooms = Room.objects.all().values_list('number', flat=True)
+    return Response(list(rooms))
 
