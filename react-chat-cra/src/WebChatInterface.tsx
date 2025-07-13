@@ -1,7 +1,6 @@
-// src/WebChatInterface.tsx
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Smile, Paperclip } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { Send, ArrowLeft } from 'lucide-react';
 import './styles.css';
 import { w3cwebsocket as W3CWebSocket } from 'websocket';
 import { v4 as uuidv4 } from 'uuid';
@@ -18,13 +17,12 @@ interface Message {
   status?: 'pending' | 'delivered' | 'failed';
 }
 
-const ChatApp: React.FC = () => {
+const WebChatInterface: React.FC = () => {
   const { roomNumber } = useParams<{ roomNumber: string }>();
   const [searchParams] = useSearchParams();
   const TOKEN = searchParams.get('token') || '';
   const ROOM = roomNumber || 'unknown';
 
-  /* states */
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -32,11 +30,10 @@ const ChatApp: React.FC = () => {
   const wsRef = useRef<W3CWebSocket | null>(null);
   const reconnectRef = useRef<NodeJS.Timeout | null>(null);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+  };
 
-  /* load history */
   const loadHistory = useCallback(async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/messages/${ROOM}/`);
@@ -59,7 +56,6 @@ const ChatApp: React.FC = () => {
     }
   }, [ROOM]);
 
-  /* connect WS */
   const connectWS = useCallback(() => {
     const ws = new W3CWebSocket(`${WS_URL}/ws/chat/${ROOM}/?token=${TOKEN}`);
     wsRef.current = ws;
@@ -74,17 +70,40 @@ const ChatApp: React.FC = () => {
     ws.onmessage = (msg) => {
       try {
         const data = JSON.parse(msg.data.toString());
+
+        // ✅ Sana formatini tekshirish
+        let timeFormatted = '';
+        try {
+          const rawTime = data.time || data.sent_at || data.created_at;
+          const parsed = new Date(rawTime);
+          if (!isNaN(parsed.getTime())) {
+            timeFormatted = parsed.toLocaleTimeString('uz-UZ', {
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+          } else {
+            console.warn('⚠️ Noto‘g‘ri sana:', rawTime);
+            timeFormatted = new Date().toLocaleTimeString('uz-UZ', {
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+          }
+        } catch {
+          timeFormatted = new Date().toLocaleTimeString('uz-UZ', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+        }
+
         const incoming: Message = {
           id: uuidv4(),
           uuid: data.uuid,
           text: data.message,
           sender: data.sender === 'bot' ? 'other' : 'me',
-          time: data.time || new Date().toLocaleTimeString('uz-UZ', {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
+          time: timeFormatted,
           status: 'delivered',
         };
+
         setMessages(prev => {
           const exists = prev.some(m => m.uuid === incoming.uuid);
           return exists ? prev : [...prev, incoming];
@@ -94,8 +113,8 @@ const ChatApp: React.FC = () => {
       }
     };
 
-    ws.onclose = (ev) => {
-      console.warn('🔁 WS uzildi', ev.code);
+    ws.onclose = () => {
+      console.warn('🔁 WS uzildi');
       setIsConnected(false);
       reconnectRef.current = setTimeout(connectWS, 3000);
     };
@@ -115,7 +134,10 @@ const ChatApp: React.FC = () => {
     };
   }, [loadHistory, connectWS]);
 
-  /* send message */
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
   const sendMessage = async () => {
     const text = newMessage.trim();
     if (!text || !isConnected) return;
@@ -134,7 +156,6 @@ const ChatApp: React.FC = () => {
     };
     setMessages(prev => [...prev, outgoing]);
     setNewMessage('');
-    scrollToBottom();
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/messages/${ROOM}/send/`, {
@@ -144,7 +165,7 @@ const ChatApp: React.FC = () => {
       });
       if (!res.ok) throw new Error('Send error');
     } catch (e) {
-      console.error('❌ Xabar yuborishda xato:', e);
+      console.error('❌ Yuborishda xato:', e);
       setMessages(prev =>
         prev.map(m => (m.uuid === uuid ? { ...m, status: 'failed' } : m))
       );
@@ -159,61 +180,52 @@ const ChatApp: React.FC = () => {
   };
 
   return (
-    <div className="chat-container">
+    <div className="chat-wrapper">
+      {/* Header */}
       <div className="chat-header">
-        <button className="back-btn">
-          <ArrowLeft size={20} />
-        </button>
-        <div className="contact-info">
-          {/* lokal placeholder */}
-          <img
-            src="/static/avatar.png"
-            alt="Admin"
-            className="contact-avatar"
-          />
-          <div className="contact-details">
-            <h3 className="contact-name">Admin</h3>
-            <p className="contact-status">{isConnected ? 'Onlayn' : 'Ulanmoqda…'}</p>
-          </div>
-        </div>
+        <img src="/images/arzum.png" alt="Bot Avatar" className="avatar-img" />
+        <div className="title">Hotel</div>
+        <div className="status">{isConnected ? '🟢 Onlayn' : '🕗 Ulanmoqda...'}</div>
       </div>
 
-      <div className="messages-container">
-        {messages.map(msg => (
-          <div key={msg.id} className={`message ${msg.sender}`}>
-            <div className="message-content">
-              <div className="message-wrapper">
-                <div className="message-bubble">{msg.text}</div>
-                <div className="message-time">{msg.time}</div>
+      {/* Chat Body */}
+      <div className="chat-body">
+        {messages.map((msg) => (
+          <div key={msg.id} className={`message-row ${msg.sender === 'me' ? 'me' : 'other'}`}>
+            {msg.sender === 'other' && (
+              <div className="avatar">
+                <img src="/images/arzum.png" alt="Bot" className="avatar-img" />
               </div>
+            )}
+            <div className="message">
+              <div className="text">{msg.text}</div>
+              <div className="time">{msg.time}</div>
             </div>
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Input */}
       <div className="chat-input">
         <textarea
-          className="message-input"
-          value={newMessage}
-          onChange={e => setNewMessage(e.target.value)}
-          onKeyPress={handleKey}
           placeholder="Xabar yozing..."
-          rows={1}
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          onKeyDown={handleKey}
         />
-        <button
-          className="send-btn"
-          onClick={sendMessage}
-          disabled={!newMessage.trim() || !isConnected}
-        >
-          <Send size={20} />
+        <button onClick={sendMessage} disabled={!newMessage.trim() || !isConnected}>
+          <Send size={18} />
         </button>
       </div>
     </div>
   );
 };
 
-export default ChatApp;
+export default WebChatInterface;
+
+
+
 
 
 
