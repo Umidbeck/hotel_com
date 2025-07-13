@@ -6,11 +6,9 @@ class RoomAdmin(admin.ModelAdmin):
     list_display = (
         'number',
         'telegram_chat_id',
-        'is_active',
-        'check_in',
-        'check_out',
+        'token',
     )
-    list_editable = ('telegram_chat_id', 'is_active')
+    list_editable = ('telegram_chat_id',)
     search_fields = ('number',)
 
 @admin.register(User)

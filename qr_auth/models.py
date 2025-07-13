@@ -1,4 +1,6 @@
 #qr_auth/models.py
+import uuid
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 
@@ -14,9 +16,12 @@ class User(AbstractUser):
 class Room(models.Model):
     number = models.CharField(max_length=10, unique=True)
     telegram_chat_id = models.CharField(max_length=100, blank=True, null=True)
-    is_active = models.BooleanField(default=True)
-    check_in = models.DateField(null=True, blank=True)
-    check_out = models.DateField(null=True, blank=True)
+    token = models.CharField(max_length=64, unique=True, blank=True, null=False)
 
-    def __str__(self):
-        return self.number
+    def save(self, *args, **kwargs):
+        if not self.token:
+            self.token = uuid.uuid4().hex  # 32 xarfdan iborat
+        super().save(*args, **kwargs)
+
+    def get_absolute_url(self):
+        return f"http://localhost:3000/chat/{self.number}?token={self.token}"
