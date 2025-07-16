@@ -7,6 +7,7 @@ class RoomAdmin(admin.ModelAdmin):
         'number',
         'telegram_chat_id',
         'token',
+        'language'
     )
     list_editable = ('telegram_chat_id',)
     search_fields = ('number',)

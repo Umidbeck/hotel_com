@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send } from 'lucide-react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import './styles.css';
 import { w3cwebsocket as W3CWebSocket } from 'websocket';
 import { v4 as uuidv4 } from 'uuid';
+import { getTranslation } from './i18n';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND || 'http://localhost:8000';
 const WS_URL = BACKEND_URL.replace('http', 'ws');
@@ -17,15 +18,24 @@ interface Message {
   status?: 'pending' | 'delivered' | 'failed';
 }
 
+interface RoomInfo {
+  language: string | null;
+}
+
 const WebChatInterface: React.FC = () => {
   const { roomNumber } = useParams<{ roomNumber: string }>();
   const [searchParams] = useSearchParams();
-  const TOKEN = searchParams.get('token') || '';
-  const ROOM = roomNumber || 'unknown';
+  const navigate = useNavigate();
 
+  const TOKEN = searchParams.get('token') || '';
+  const ROOM = roomNumber || '';
+
+  const [t, setT] = useState(getTranslation());
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
+  const [tokenValid, setTokenValid] = useState<boolean | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<W3CWebSocket | null>(null);
   const reconnectRef = useRef<NodeJS.Timeout | null>(null);
@@ -34,12 +44,48 @@ const WebChatInterface: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const checkTokenValidity = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/validate/${ROOM}/?token=${TOKEN}`);
+      const data = await res.json();
+      if (data.valid === true) {
+        setTokenValid(true);
+      } else {
+        setTokenValid(false);
+        navigate('/404', { replace: true });
+      }
+    } catch {
+      setTokenValid(false);
+      navigate('/404', { replace: true });
+    }
+  }, [ROOM, TOKEN, navigate]);
+
+  const fetchRoomLanguage = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/room-info/${ROOM}/?token=${TOKEN}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const data: RoomInfo = await res.json();
+
+      if (!data.language) {
+        navigate(`/language-select?room=${ROOM}&token=${TOKEN}`, { replace: true });
+        return;
+      }
+
+      localStorage.setItem('chat_language', data.language);
+      setT(getTranslation());
+    } catch (err) {
+      console.error('❌ Xatolik: room info', err);
+      navigate('/404', { replace: true });
+    }
+  }, [ROOM, TOKEN, navigate]);
+
   const loadHistory = useCallback(async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/messages/${ROOM}/`);
-      if (!res.ok) throw new Error('Network error');
       const data = await res.json();
-      const loaded: Message[] = data.map((m: any) => ({
+
+      const history: Message[] = data.map((m: any) => ({
         id: uuidv4(),
         uuid: m.uuid,
         text: m.text,
@@ -50,20 +96,17 @@ const WebChatInterface: React.FC = () => {
         }),
         status: 'delivered',
       }));
-      setMessages(loaded);
+
+      setMessages(history);
+      setHasLoaded(true);
     } catch (e) {
       console.error('❌ Tarixni olishda xato:', e);
     }
   }, [ROOM]);
 
   const connectWS = useCallback(() => {
-    // Avvalgi WebSocket bo‘lsa, tozalaymiz
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      try {
-        wsRef.current.close(1000, "Clean reconnect");
-      } catch (e) {
-        console.warn("⛔ WS oldingi ulanishni yopishda xato:", e);
-      }
+      wsRef.current.close(1000, 'Reconnect');
     }
 
     const ws = new W3CWebSocket(`${WS_URL}/ws/chat/${ROOM}/?token=${TOKEN}`);
@@ -71,60 +114,61 @@ const WebChatInterface: React.FC = () => {
     setIsConnected(false);
 
     ws.onopen = () => {
-      console.log('✅ WS ulandi');
       setIsConnected(true);
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
 
-    ws.onmessage = (msg) => {
+    ws.onmessage = (message) => {
       try {
-        const data = JSON.parse(msg.data.toString());
-        const rawTime = data.time || data.sent_at || data.created_at;
-        const parsed = new Date(rawTime);
-        const timeFormatted = !isNaN(parsed.getTime())
-          ? parsed.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
-          : new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
+        const data = JSON.parse(message.data.toString());
 
         const incoming: Message = {
           id: uuidv4(),
           uuid: data.uuid,
           text: data.message,
           sender: data.sender === 'bot' ? 'other' : 'me',
-          time: timeFormatted,
+          time: new Date().toLocaleTimeString('uz-UZ', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
           status: 'delivered',
         };
 
         setMessages(prev => {
-          const exists = prev.some(m => m.uuid === incoming.uuid);
-          return exists ? prev : [...prev, incoming];
+          const already = prev.some(m => m.uuid === incoming.uuid);
+          return already ? prev : [...prev, incoming];
         });
       } catch (e) {
-        console.error('Xatolik:', e);
+        console.error('❌ WS parsing xatosi:', e);
       }
     };
 
     ws.onclose = () => {
-      console.warn('🔁 WS uzildi');
       setIsConnected(false);
       reconnectRef.current = setTimeout(connectWS, 3000);
     };
 
-    ws.onerror = (err) => {
-      console.error('❌ WS xato:', err);
+    ws.onerror = () => {
       setIsConnected(false);
     };
   }, [ROOM, TOKEN]);
 
   useEffect(() => {
-    loadHistory();
-    connectWS();
+    checkTokenValidity();
+  }, [checkTokenValidity]);
+
+  useEffect(() => {
+    if (tokenValid) {
+      fetchRoomLanguage();
+      loadHistory();
+      connectWS();
+    }
+
     return () => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.close(1000, "Component unmounted");
-      }
+      if (wsRef.current) wsRef.current.close(1000, 'Unmount');
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
-  }, [loadHistory, connectWS]);
+  }, [tokenValid, fetchRoomLanguage, loadHistory, connectWS]);
 
   useEffect(() => {
     scrollToBottom();
@@ -146,6 +190,7 @@ const WebChatInterface: React.FC = () => {
       }),
       status: 'pending',
     };
+
     setMessages(prev => [...prev, outgoing]);
     setNewMessage('');
 
@@ -156,8 +201,7 @@ const WebChatInterface: React.FC = () => {
         body: JSON.stringify({ text, uuid }),
       });
       if (!res.ok) throw new Error('Send error');
-    } catch (e) {
-      console.error('❌ Yuborishda xato:', e);
+    } catch {
       setMessages(prev =>
         prev.map(m => (m.uuid === uuid ? { ...m, status: 'failed' } : m))
       );
@@ -171,16 +215,18 @@ const WebChatInterface: React.FC = () => {
     }
   };
 
+  if (!hasLoaded) {
+    return <div className="loading">⏳ Yuklanmoqda...</div>;
+  }
+
   return (
     <div className="chat-wrapper">
-      {/* Header */}
       <div className="chat-header">
         <img src="/images/arzum.png" alt="Bot Avatar" className="avatar-img" />
-        <div className="title">Hotel</div>
-        <div className="status">{isConnected ? '🟢 Onlayn' : '🕗 Ulanmoqda...'}</div>
+        <div className="title">{t.hotel}</div>
+        <div className="status">{isConnected ? t.online : t.connecting}</div>
       </div>
 
-      {/* Chat Body */}
       <div className="chat-body">
         {messages.map((msg) => (
           <div key={msg.id} className={`message-row ${msg.sender === 'me' ? 'me' : 'other'}`}>
@@ -198,10 +244,9 @@ const WebChatInterface: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
       <div className="chat-input">
         <textarea
-          placeholder="Xabar yozing..."
+          placeholder={t.placeholder}
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyDown={handleKey}
@@ -215,6 +260,24 @@ const WebChatInterface: React.FC = () => {
 };
 
 export default WebChatInterface;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

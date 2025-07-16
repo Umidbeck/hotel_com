@@ -19,11 +19,13 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from chat import views as chat_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('qr_auth.urls')),  # 👈 BU BORLIGINI TEKSHIR
     path('', include('chat.urls')),     # agar kerak bo‘lsa
+    path('api/', include('qr_auth.urls')),
 ]
 
 if settings.DEBUG:

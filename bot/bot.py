@@ -1,4 +1,3 @@
-# bot/bot.py
 import os
 import django
 import asyncio
@@ -27,7 +26,6 @@ from chat.models import Message
 STATE_CLEAR, STATE_DELETE = "clear_messages", "delete_room"
 BACKEND_WS = config("BACKEND_WS", default="ws://localhost:8000")
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
-BACKEND_URL = config("BACKEND_URL", default="http://localhost:8000")  # ✅ YANGI QO‘SHILDI
 
 # =================== Klaviaturalar ====================
 ADMIN_KB = ReplyKeyboardMarkup(
@@ -47,7 +45,7 @@ def get_or_create_room(number: str, tg_chat_id: str):
         defaults={
             "telegram_chat_id": tg_chat_id,
             "token": uuid_lib.uuid4().hex,
-            "qr_code": uuid_lib.uuid4().hex,  # ✅ DOIMIY QR
+            "qr_code": uuid_lib.uuid4().hex,
         }
     )
     if not room.token:
@@ -66,7 +64,9 @@ def get_room_by_number(number: str):
 @sync_to_async
 def clear_room_and_reset_token(room: Room):
     count, _ = Message.objects.filter(chatroom=room).delete()
-    room.rotate_token()  # ✅ YANGI TOKEN
+    room.rotate_token()
+    room.language = None  # ✅ Tilni ham o‘chiramiz
+    room.save()
     return count
 
 @sync_to_async
@@ -145,7 +145,11 @@ async def handle_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if state == STATE_CLEAR:
         deleted = await clear_room_and_reset_token(room)
-        await update.message.reply_text(f"✅ {room.number} dagi {deleted} ta xabar tozalandi. Yangi token yaratildi.", reply_markup=ADMIN_KB)
+        await update.message.reply_text(
+            f"✅ {room.number} dagi {deleted} ta xabar tozalandi.\n"
+            f"🔄 Yangi token yaratildi.\n🌐 Tanlangan til ham olib tashlandi.",
+            reply_markup=ADMIN_KB
+        )
     elif state == STATE_DELETE:
         await delete_room(room)
         await update.message.reply_text(f"🗑 {room.number} o‘chirildi.", reply_markup=ADMIN_KB)
@@ -163,7 +167,6 @@ async def qrlink_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Xona topilmadi.")
         return
 
-    # ✅ DOIMIY QR URL – backend orqali marshrut
     qr_url = f"http://localhost:8000/qr/{room.qr_code}/"
     qr_buf = generate_qr_code(qr_url)
 
@@ -237,6 +240,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

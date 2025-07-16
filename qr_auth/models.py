@@ -15,6 +15,7 @@ class Room(models.Model):
     token             = models.CharField(max_length=64, unique=True, blank=True, null=False)
     # 👇 DOIMIY QR uchun (hech qachon o‘zgarmaydi)
     qr_code           = models.CharField(max_length=32, unique=True, blank=False, null=False, default=uuid.uuid4().hex)
+    language = models.CharField(max_length=10, null=True, blank=True)
 
     def save(self, *args, **kwargs):
         if not self.token:

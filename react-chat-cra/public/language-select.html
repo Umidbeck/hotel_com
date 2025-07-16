@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Til Tanlash</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+
+    .container {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 40px;
+      border-radius: 20px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+      box-shadow: 0 0 20px rgba(0,0,0,0.2);
+    }
+
+    h1 {
+      color: #7a3c3c;
+      margin-bottom: 20px;
+    }
+
+    .language-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .language-btn {
+      padding: 15px 25px;
+      font-size: 18px;
+      font-weight: bold;
+      border: none;
+      border-radius: 50px;
+      cursor: pointer;
+      color: #784343;
+      transition: all 0.3s ease;
+    }
+
+    .uzbek-btn {
+      background: linear-gradient(45deg, #1e3c72, #2a5298);
+    }
+
+    .russian-btn
+    {
+      background: linear-gradient(45deg, #c31432, #240b36);
+    }
+
+    .english-btn {
+      background: linear-gradient(45deg, #0575e6, #021b79);
+    }
+
+    .language-btn:hover {
+      transform: translateY(-3px);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Tilni tanlang / Выберите язык / Choose language</h1>
+    <div class="language-buttons">
+      <button class="language-btn uzbek-btn" onclick="selectLanguage('uzbek')">🇺🇿 O‘zbek tili</button>
+      <button class="language-btn russian-btn" onclick="selectLanguage('russian')">🇷🇺 Русский язык</button>
+      <button class="language-btn english-btn" onclick="selectLanguage('english')">🇬🇧 English</button>
+    </div>
+  </div>
+
+  <script>
+    // URL token va xona raqamini olish
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    const room = window.location.pathname.split('/').filter(Boolean).pop(); // /chat/101 => '101'
+
+    function selectLanguage(language) {
+      if (!room || !token) {
+        alert("Token yoki xona raqami topilmadi.");
+        return;
+      }
+
+      // Tilni saqlaymiz
+      localStorage.setItem('lang', language);
+
+      // React chat sahifasiga qaytamiz
+      const redirectUrl = `/chat/${room}?token=${token}`;
+      window.location.href = redirectUrl;
+    }
+  </script>
+</body>
+</html>

@@ -1,17 +1,20 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+// src/App.tsx
+import React from 'react';
+import { Routes, Route } from 'react-router-dom';
 import WebChatInterface from './WebChatInterface';
-import QRRedirect from './QRRedirect'; // 👈 bu faylni import qiling
+import LanguageSelectPage from './pages/LanguageSelectPage';
+import NotFoundPage from './pages/NotFoundPage';
 
-function App() {
+const App: React.FC = () => {
   return (
-    <Router>
-      <Routes>
-        <Route path="/chat/:roomNumber" element={<WebChatInterface />} />
-        <Route path="/qr/:qr_code" element={<QRRedirect />} /> {/* 👈 YANGI */}
-        {/* boshqa routelar */}
-      </Routes>
-    </Router>
+    <Routes>
+      <Route path="/chat/:roomNumber" element={<WebChatInterface />} />
+      <Route path="/language-select" element={<LanguageSelectPage />} />
+      <Route path="/404" element={<NotFoundPage />} />
+      <Route path="*" element={<NotFoundPage />} />
+    </Routes>
   );
-}
+};
 
 export default App;
+

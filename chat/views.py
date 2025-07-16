@@ -61,3 +61,5 @@ def get_message_history(request, room_number):
 def rooms_list(request):
     rooms = Room.objects.all().values_list('number', flat=True)
     return Response(list(rooms))
+
+
