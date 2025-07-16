@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Smile, Paperclip } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import './styles.css';
 import { w3cwebsocket as W3CWebSocket } from 'websocket';
@@ -57,6 +57,15 @@ const WebChatInterface: React.FC = () => {
   }, [ROOM]);
 
   const connectWS = useCallback(() => {
+    // Avvalgi WebSocket bo‘lsa, tozalaymiz
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        wsRef.current.close(1000, "Clean reconnect");
+      } catch (e) {
+        console.warn("⛔ WS oldingi ulanishni yopishda xato:", e);
+      }
+    }
+
     const ws = new W3CWebSocket(`${WS_URL}/ws/chat/${ROOM}/?token=${TOKEN}`);
     wsRef.current = ws;
     setIsConnected(false);
@@ -70,30 +79,11 @@ const WebChatInterface: React.FC = () => {
     ws.onmessage = (msg) => {
       try {
         const data = JSON.parse(msg.data.toString());
-
-        // ✅ Sana formatini tekshirish
-        let timeFormatted = '';
-        try {
-          const rawTime = data.time || data.sent_at || data.created_at;
-          const parsed = new Date(rawTime);
-          if (!isNaN(parsed.getTime())) {
-            timeFormatted = parsed.toLocaleTimeString('uz-UZ', {
-              hour: '2-digit',
-              minute: '2-digit',
-            });
-          } else {
-            console.warn('⚠️ Noto‘g‘ri sana:', rawTime);
-            timeFormatted = new Date().toLocaleTimeString('uz-UZ', {
-              hour: '2-digit',
-              minute: '2-digit',
-            });
-          }
-        } catch {
-          timeFormatted = new Date().toLocaleTimeString('uz-UZ', {
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-        }
+        const rawTime = data.time || data.sent_at || data.created_at;
+        const parsed = new Date(rawTime);
+        const timeFormatted = !isNaN(parsed.getTime())
+          ? parsed.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
+          : new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
 
         const incoming: Message = {
           id: uuidv4(),
@@ -129,7 +119,9 @@ const WebChatInterface: React.FC = () => {
     loadHistory();
     connectWS();
     return () => {
-      wsRef.current?.close();
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close(1000, "Component unmounted");
+      }
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
     };
   }, [loadHistory, connectWS]);
@@ -223,6 +215,7 @@ const WebChatInterface: React.FC = () => {
 };
 
 export default WebChatInterface;
+
 
 
 

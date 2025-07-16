@@ -1,15 +1,17 @@
-import React from 'react';
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import WebChatInterface from './WebChatInterface';
+import QRRedirect from './QRRedirect'; // 👈 bu faylni import qiling
 
-const App: React.FC = () => {
+function App() {
   return (
     <Router>
       <Routes>
         <Route path="/chat/:roomNumber" element={<WebChatInterface />} />
+        <Route path="/qr/:qr_code" element={<QRRedirect />} /> {/* 👈 YANGI */}
+        {/* boshqa routelar */}
       </Routes>
     </Router>
   );
-};
+}
 
 export default App;

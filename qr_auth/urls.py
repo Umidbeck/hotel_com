@@ -1,10 +1,7 @@
-# qr_auth/urls.py
 from django.urls import path
-from django.http import HttpResponse
-
-def test_view(request):
-    return HttpResponse("QR auth ishlayapti.")
+from .views import qr_redirect, qr_image
 
 urlpatterns = [
-    path("test/", test_view),
+    path("qr/<str:qr_code>/", qr_redirect, name="qr-redirect"),
+    path("qr-img/<str:qr_code>.png", qr_image, name="qr-image"),
 ]

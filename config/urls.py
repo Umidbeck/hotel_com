@@ -22,8 +22,8 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include('chat.urls')),
-    path('auth/', include('qr_auth.urls')),  # kerak bo‘lsa
+    path('', include('qr_auth.urls')),  # 👈 BU BORLIGINI TEKSHIR
+    path('', include('chat.urls')),     # agar kerak bo‘lsa
 ]
 
 if settings.DEBUG:

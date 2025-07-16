@@ -1,3 +1,4 @@
+#chat/views.py
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from qr_auth.models import Room
@@ -5,6 +6,7 @@ from chat.models import Message
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
+from .utils import enqueue_if_offline
 import uuid
 
 @api_view(['POST'])
@@ -15,6 +17,8 @@ def send_message(request, room_number):
         return Response({'error': 'text & uuid required'}, status=400)
 
     room, _ = Room.objects.get_or_create(number=room_number)
+
+    # Bazaga saqlaymiz
     Message.objects.create(
         chatroom=room,
         text=text,
@@ -23,9 +27,12 @@ def send_message(request, room_number):
         status="delivered"
     )
 
+    group_name = f"chat_{room_number}"
     channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
-        f"chat_{room_number}",
+
+    # Hozirgi barcha WebSocket clientlar
+    is_anyone_online = async_to_sync(channel_layer.group_send)(
+        group_name,
         {
             'type': 'chat_message',
             'message': text,
@@ -34,6 +41,10 @@ def send_message(request, room_number):
             'uuid': uuid_val,
         }
     )
+
+    # ❗ is_anyone_online ni tekshirish iloji yo‘q → biz har doim yozamiz
+    enqueue_if_offline(room_number, text, uuid_val, sender='me')
+
     return Response({'status': 'delivered'})
 
 @api_view(['GET'])

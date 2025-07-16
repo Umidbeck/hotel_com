@@ -1,16 +1,16 @@
 # qr_auth/views.py
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
-from rest_framework.response import Response
+from django.shortcuts import get_object_or_404, redirect
+from django.http import HttpResponse
 from qr_auth.models import Room
+from qr_auth.utils import generate_qr_code
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def qr_login(request, room_number):
-    room, created = Room.objects.get_or_create(number=room_number)
-    return Response({
-        'status': 'success',
-        'room': room.number,
-        'token': room.token,
-        'link': room.get_absolute_url()
-    })
+def qr_redirect(request, qr_code):
+    """Doimiy QR → hozirgi token asosida redirect"""
+    room = get_object_or_404(Room, qr_code=qr_code)
+    return redirect(room.get_absolute_url())
+
+def qr_image(request, qr_code):
+    """Doimiy QR-kod rasm (PNG) olish"""
+    short_url = request.build_absolute_uri(f"/qr/{qr_code}/")
+    buf = generate_qr_code(short_url)
+    return HttpResponse(buf, content_type="image/png")
